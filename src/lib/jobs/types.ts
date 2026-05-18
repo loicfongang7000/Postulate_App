@@ -1,4 +1,4 @@
-export type JobSource = "france_travail" | "adzuna";
+export type JobSource = "france_travail" | "adzuna" | "jooble" | "arbeitnow" | "remotive";
 
 export type NormalizedJob = {
   id: string;
@@ -9,6 +9,8 @@ export type NormalizedJob = {
   url: string;
   source: JobSource;
   publishedAt: string | null;
+  contactEmail?: string | null;
+  companyUrl?: string | null;
 };
 
 export type ScoredJob = NormalizedJob & {

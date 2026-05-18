@@ -127,3 +127,48 @@ export function scoreAndSort(
   scored.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
   return scored;
 }
+
+/**
+ * Garantit un minimum d'offres par source avant de remplir le reste par score.
+ * Évite que les sources en langue étrangère (Remotive, Arbeitnow) soient
+ * complètement éliminées par le Jaccard scoring face à des sources en français.
+ */
+export function sampleWithDiversity(
+  jobs: ScoredJob[],
+  maxTotal: number,
+  minPerSource = 5,
+): ScoredJob[] {
+  if (jobs.length === 0) return [];
+
+  // Buckets triés par score (jobs est déjà trié)
+  const buckets = new Map<string, ScoredJob[]>();
+  for (const job of jobs) {
+    if (!buckets.has(job.source)) buckets.set(job.source, []);
+    buckets.get(job.source)!.push(job);
+  }
+
+  const seen = new Set<string>();
+  const result: ScoredJob[] = [];
+
+  // Passe 1 — quota garanti par source
+  for (const bucket of buckets.values()) {
+    for (const job of bucket.slice(0, minPerSource)) {
+      if (!seen.has(job.id)) {
+        seen.add(job.id);
+        result.push(job);
+      }
+    }
+  }
+
+  // Passe 2 — compléter avec les meilleurs scores restants
+  for (const job of jobs) {
+    if (result.length >= maxTotal) break;
+    if (!seen.has(job.id)) {
+      seen.add(job.id);
+      result.push(job);
+    }
+  }
+
+  // Re-trier le résultat final par score
+  return result.sort((a, b) => b.score - a.score);
+}

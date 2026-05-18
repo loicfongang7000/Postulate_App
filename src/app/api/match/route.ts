@@ -6,7 +6,10 @@ import {
   isFranceTravailConfigured,
   searchFranceTravail,
 } from "@/lib/jobs/franceTravail";
-import { dedupeJobs, scoreAndSort } from "@/lib/jobs/matchPipeline";
+import { searchJooble, isJoobleConfigured } from "@/lib/jobs/jooble";
+import { searchArbeitnow } from "@/lib/jobs/arbeitnow";
+import { searchRemotive } from "@/lib/jobs/remotive";
+import { dedupeJobs, scoreAndSort, sampleWithDiversity } from "@/lib/jobs/matchPipeline";
 import type { ScoredJob } from "@/lib/jobs/types";
 
 export const runtime = "nodejs";
@@ -30,6 +33,9 @@ export async function POST(request: Request) {
   }
   if (!isAdzunaConfigured()) {
     warnings.push("Adzuna non configuré (ADZUNA_APP_ID / ADZUNA_APP_KEY).");
+  }
+  if (!isJoobleConfigured()) {
+    warnings.push("Jooble non configuré (JOOBLE_API_KEY) — offres Indeed.fr/Monster.fr non incluses.");
   }
 
   let form: FormData;
@@ -106,8 +112,9 @@ export async function POST(request: Request) {
   }
 
   const ftRangeEnd = Math.min(49, maxResults + 14);
+  const perSource = Math.min(25, maxResults + 10);
 
-  const [ftJobs, adzJobs] = await Promise.all([
+  const [ftJobs, adzJobs, joobleJobs, arbeitnowJobs, remotiveJobs] = await Promise.all([
     isFranceTravailConfigured()
       ? searchFranceTravail({
           motsCles: profile.searchQuery,
@@ -115,11 +122,11 @@ export async function POST(request: Request) {
           rangeStart: 0,
           rangeEnd: ftRangeEnd,
         }).catch((e) => {
-          const msg = e instanceof Error ? e.message : String(e);
-          warnings.push(`France Travail: ${msg}`);
+          warnings.push(`France Travail: ${e instanceof Error ? e.message : String(e)}`);
           return [];
         })
       : Promise.resolve([]),
+
     isAdzunaConfigured()
       ? searchAdzunaFr({
           what: profile.searchQuery,
@@ -127,17 +134,46 @@ export async function POST(request: Request) {
           page: 1,
           resultsPerPage: Math.min(50, maxResults + 15),
         }).catch((e) => {
-          const msg = e instanceof Error ? e.message : String(e);
-          warnings.push(`Adzuna: ${msg}`);
+          warnings.push(`Adzuna: ${e instanceof Error ? e.message : String(e)}`);
           return [];
         })
       : Promise.resolve([]),
+
+    isJoobleConfigured()
+      ? searchJooble({
+          keywords: profile.searchQuery,
+          location: profile.locationHint ?? "France",
+          page: 1,
+          count: perSource,
+        }).catch((e) => {
+          warnings.push(`Jooble: ${e instanceof Error ? e.message : String(e)}`);
+          return [];
+        })
+      : Promise.resolve([]),
+
+    searchArbeitnow({
+      search: profile.searchQuery,
+      page: 1,
+    }).catch((e) => {
+      warnings.push(`Arbeitnow: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }),
+
+    searchRemotive({
+      search: profile.searchQuery,
+      limit: perSource,
+    }).catch((e) => {
+      warnings.push(`Remotive: ${e instanceof Error ? e.message : String(e)}`);
+      return [];
+    }),
   ]);
 
-  const merged = [...ftJobs, ...adzJobs];
+  const merged = [...ftJobs, ...adzJobs, ...joobleJobs, ...arbeitnowJobs, ...remotiveJobs];
   const deduped = dedupeJobs(merged);
   const scored = scoreAndSort(profile, deduped);
-  const jobs: ScoredJob[] = scored.slice(0, maxResults);
+  // Garantit au moins 5 offres par source active pour ne pas écraser
+  // les sources en langue étrangère (Remotive, Arbeitnow) par le scoring Jaccard.
+  const jobs: ScoredJob[] = sampleWithDiversity(scored, maxResults, 5);
 
   return NextResponse.json({
     profile: {
@@ -153,7 +189,15 @@ export async function POST(request: Request) {
       totalRaw: merged.length,
       totalDeduped: deduped.length,
       returned: jobs.length,
+      sources: {
+        france_travail: ftJobs.length,
+        adzuna: adzJobs.length,
+        jooble: joobleJobs.length,
+        arbeitnow: arbeitnowJobs.length,
+        remotive: remotiveJobs.length,
+      },
     },
+    cvText: cvText.slice(0, 6000),
   });
 }
 

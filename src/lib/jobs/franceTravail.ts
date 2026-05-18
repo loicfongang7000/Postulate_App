@@ -155,6 +155,20 @@ function pickJobUrl(o: Record<string, unknown>): string {
   );
 }
 
+const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/;
+
+function extractContactEmail(contact: Record<string, unknown> | null): string | null {
+  if (!contact) return null;
+  for (const key of ["coordonnees1", "coordonnees2", "coordonnees3"]) {
+    const val = pickString(contact[key]);
+    if (val) {
+      const m = val.match(EMAIL_RE);
+      if (m) return m[0].toLowerCase();
+    }
+  }
+  return null;
+}
+
 function normalizeFranceTravailOffer(raw: unknown): NormalizedJob | null {
   const o = asRecord(raw);
   if (!o) return null;
@@ -182,6 +196,8 @@ function normalizeFranceTravailOffer(raw: unknown): NormalizedJob | null {
     pickString(o.dateCreation) ??
     pickString(o.datePublication);
 
+  const contact = asRecord(o.contact);
+
   return {
     id: `ft:${id}`,
     title,
@@ -191,6 +207,8 @@ function normalizeFranceTravailOffer(raw: unknown): NormalizedJob | null {
     url: pickJobUrl(o),
     source: "france_travail",
     publishedAt: published,
+    contactEmail: extractContactEmail(contact),
+    companyUrl: pickString(entreprise?.url),
   };
 }
 
